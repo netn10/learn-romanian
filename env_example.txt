@@ -1,0 +1,9 @@
+# MongoDB Configuration
+MONGO_URI=mongodb://localhost:27017/
+DATABASE_NAME=romanian_flashcards
+
+# For MongoDB Atlas (cloud), use format like:
+# MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/
+
+# For authenticated local MongoDB:
+# MONGO_URI=mongodb://username:password@localhost:27017/ 
