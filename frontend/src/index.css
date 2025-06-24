@@ -71,6 +71,9 @@ body.dark-mode {
   margin: 0 auto;
   padding: 20px;
   min-height: 100vh;
+  /* Prevent layout shifts during import */
+  position: relative;
+  overflow-anchor: none;
 }
 
 /* Header Styles */
@@ -217,8 +220,7 @@ body.dark-mode {
 }
 
 .card:hover {
-  transform: translateY(-8px);
-  box-shadow: var(--shadow-xl);
+  /* Hover animation removed */
 }
 
 /* Flashcard Styles */
@@ -238,11 +240,16 @@ body.dark-mode {
   margin: 16px 0;
   border: 2px solid rgba(var(--primary-color), 0.1);
   transition: var(--transition);
+  outline: none;
+}
+
+.flashcard:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(var(--primary-color), 0.1);
 }
 
 .flashcard:hover {
-  border-color: var(--primary-color);
-  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(var(--primary-color), 0.1) 100%);
+  /* Hover animation removed */
 }
 
 .flashcard-text {
@@ -252,6 +259,24 @@ body.dark-mode {
   margin-bottom: 24px;
   line-height: 1.4;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  /* Enable text selection on flashcard text */
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  cursor: text;
+  transition: var(--transition);
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.flashcard-text:hover {
+  background: rgba(102, 126, 234, 0.05);
+  transform: scale(1.02);
+}
+
+.dark-mode .flashcard-text:hover {
+  background: rgba(91, 115, 232, 0.05);
 }
 
 .flashcard-hint {
@@ -418,9 +443,7 @@ body.dark-mode {
 }
 
 .card-item:hover {
-  background: var(--bg-primary);
-  transform: translateX(8px);
-  box-shadow: var(--shadow-md);
+  /* Hover animation removed */
 }
 
 .card-content {
@@ -566,6 +589,91 @@ body.dark-mode {
   font-style: italic;
   border-top: 1px solid var(--bg-tertiary);
   margin-top: 12px;
+}
+
+/* Import Progress Bar */
+.import-progress {
+  background: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  margin: 20px 0;
+  border: 1px solid var(--bg-tertiary);
+  /* Prevent layout shifts */
+  min-height: 120px;
+  /* Smooth transitions */
+  transition: opacity 0.3s ease-in-out;
+}
+
+.import-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.import-progress-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.import-progress-percent {
+  font-weight: bold;
+  color: var(--primary-color);
+  font-size: 1.1rem;
+}
+
+.import-progress-bar {
+  width: 100%;
+  height: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.import-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-color), var(--primary-hover));
+  border-radius: 6px;
+  transition: width 0.2s ease-out; /* Smoother, faster transition */
+  position: relative;
+  /* Prevent subpixel rendering issues */
+  transform: translateZ(0);
+}
+
+.import-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  /* Removed shimmer animation to prevent screen shake */
+}
+
+.import-progress-status {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  text-align: center;
+  padding: 4px 0;
+  /* Prevent text jumping */
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Dark mode adjustments for progress bar */
+.dark-mode .import-progress-bar {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.dark-mode .import-progress-fill::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
 }
 
 /* Timer Animations */
@@ -747,6 +855,52 @@ body.dark-mode {
   font-weight: 600;
 }
 
+/* Card edit form styles */
+.card-edit-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card-edit-form .form-group {
+  margin-bottom: 12px;
+}
+
+.card-edit-form .form-group:last-of-type {
+  margin-bottom: 16px;
+}
+
+.card-edit-form label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.card-edit-form input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid rgba(var(--primary-color), 0.2);
+  border-radius: var(--border-radius);
+  font-size: 1rem;
+  transition: var(--transition);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.card-edit-form input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(var(--primary-color), 0.1);
+}
+
+.card-edit-form .card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .container {
@@ -777,6 +931,12 @@ body.dark-mode {
 
   .flashcard-text {
     font-size: 1.8rem;
+    /* Ensure text selection works on mobile */
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    cursor: text;
   }
 
   .flashcard-controls {
@@ -826,4 +986,226 @@ body.dark-mode {
    .study-control-item {
      width: 100%;
    }
- } 
+
+   .card-edit-form .card-actions {
+     flex-direction: column;
+     gap: 8px;
+   }
+
+   .card-edit-form .btn {
+     width: 100%;
+   }
+ }
+
+/* Manage Cards Styles */
+.manage-cards-header {
+  margin-bottom: 30px;
+}
+
+.manage-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.search-section {
+  flex: 1;
+  min-width: 250px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 1rem;
+  transition: var(--transition);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.controls-section {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.page-size-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.page-size-control select {
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--border-radius);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+/* Sort Headers */
+.sort-headers {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 120px;
+  gap: 15px;
+  margin-bottom: 20px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--border-radius);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sort-header {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.sort-header:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.sort-header.active {
+  background: var(--primary-color);
+  color: white;
+}
+
+.sort-header-actions {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+}
+
+/* Enhanced Card Items for Manage View */
+.manage-cards-header + div .card-item {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 15px;
+  align-items: center;
+}
+
+.manage-cards-header + div .card-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 15px;
+  align-items: center;
+}
+
+.card-date {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Pagination */
+.pagination {
+  margin-top: 30px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.pagination-info {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.pagination-controls {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pagination-controls .btn {
+  min-width: 40px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.btn-primary {
+  background: var(--primary-color);
+  color: white;
+  border: 1px solid var(--primary-color);
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+/* Enhanced Responsive Design for Manage Cards */
+@media (max-width: 768px) {
+  .manage-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-section {
+    min-width: auto;
+  }
+
+  .controls-section {
+    justify-content: center;
+  }
+
+  .sort-headers {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .sort-header {
+    justify-content: space-between;
+  }
+
+  .manage-cards-header + div .card-item {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .manage-cards-header + div .card-content {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    text-align: center;
+  }
+
+  .pagination {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .pagination-controls {
+    justify-content: center;
+  }
+} 

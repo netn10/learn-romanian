@@ -4,11 +4,29 @@ A modern web application for learning Romanian using interactive flashcards, bui
 
 ## Features
 
+### Core Functionality
 - 📚 **Interactive Flashcards**: Study with Anki-style flashcards
 - 🔄 **Bidirectional Learning**: English to Romanian and Romanian to English
-- ➕ **Easy Card Management**: Add and remove cards with a simple interface
 - 🎲 **Random Study Mode**: Get random cards for effective learning
+- ⏰ **Timer Mode**: Study with customizable time limits (3-20 seconds) for self-testing
+- 🔊 **Text-to-Speech**: Advanced pronunciation support for Romanian
+- 🎯 **Shuffled Deck Mode**: Progress through all cards systematically with completion tracking
+
+### Enhanced Card Management
+- ➕ **Easy Card Creation**: Add individual cards or bulk import from formatted text
+- 🔍 **Advanced Management Interface**: Professional card management with modern features:
+  - **Real-time search** across English and Romanian text
+  - **Sortable columns** by content, creation date (ascending/descending)
+  - **Pagination** with configurable page sizes (5, 10, 25, 50 cards per page)
+  - **Smart pagination controls** with page number navigation
+  - **Responsive design** optimized for desktop and mobile devices
+- ✏️ **In-line Editing**: Edit cards directly in the management interface
+- 📥 **Bulk Import**: Import multiple cards with real-time progress tracking
+
+### User Experience
 - 🎨 **Modern UI**: Beautiful, responsive design with smooth animations
+- 🌓 **Dark Mode**: Toggle between light and dark themes
+- 📱 **Mobile-Friendly**: Fully responsive design that works on all devices
 - 💾 **Persistent Storage**: MongoDB database to store your flashcards
 - 🚀 **Easy Launch**: Run both services with a single script
 
@@ -149,28 +167,49 @@ The frontend will start on `http://localhost:3000`
 ### Study Mode
 - Click "Get Random Card" to start studying
 - Click on the flashcard to reveal the answer
-- Use "Flip Direction" to switch between English→Romanian and Romanian→English
-- The app randomly selects the direction for each new card
+- Use advanced study options:
+  - **Timer Mode**: Enable timed study sessions with customizable durations
+  - **Text-to-Speech**: Listen to Romanian pronunciations
+  - **Shuffled Deck Mode**: Work through all cards systematically
+- The app randomly selects the direction for each new card (English→Romanian or Romanian→English)
 
 ### Adding Cards
-- Go to the "Add Cards" tab
-- Enter English text and Romanian translation
-- Click "Add Card" to save
+- **Single Cards**: Go to the "Add Cards" tab, enter translations, and save
+- **Bulk Import**: Go to the "Bulk Import" tab and paste formatted text like:
+  ```
+  Hello: Salut
+  Goodbye: La revedere
+  Thank you: Mulțumesc
+  ```
 
-### Managing Cards
-- Go to the "Manage Cards" tab
-- View all your flashcards
-- Delete cards you no longer need
+### Managing Cards (Enhanced)
+- Go to the "Manage Cards" tab for professional card management:
+- **Search**: Use the search box to find specific cards by English or Romanian text
+- **Sort**: Click column headers to sort by English, Romanian, or creation date
+- **Paginate**: Choose how many cards to display per page (5-50)
+- **Edit**: Click the edit button to modify cards in-place
+- **Delete**: Remove cards you no longer need
+- **Navigate**: Use pagination controls to browse through large collections
 
 ## API Endpoints
 
 The Flask backend provides the following REST API endpoints:
 
-- `GET /api/cards` - Get all flashcards
+### Card Management
+- `GET /api/cards` - Get flashcards with pagination, sorting, and search
+  - Query parameters: `page`, `limit`, `sort_by`, `sort_order`, `search`
+- `GET /api/cards/all` - Get all flashcards (for study mode)
 - `POST /api/cards` - Add a new flashcard
 - `PUT /api/cards/<id>` - Update a flashcard
 - `DELETE /api/cards/<id>` - Delete a flashcard
 - `GET /api/cards/random` - Get a random flashcard
+
+### Bulk Operations
+- `POST /api/cards/bulk` - Import multiple flashcards from text
+- `POST /api/cards/bulk/progress` - Import with real-time progress tracking
+
+### System
+- `GET /api/health` - Check API and database health
 
 ## Technologies Used
 

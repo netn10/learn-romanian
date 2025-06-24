@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Shuffle, Plus, BookOpen, List, RotateCcw, Trash2, Upload, FileText, Clock, Play, Pause, SkipForward, Volume2, Moon, Sun } from 'lucide-react';
+import { Shuffle, Plus, BookOpen, List, RotateCcw, Trash2, Upload, FileText, Clock, Play, Pause, SkipForward, Volume2, Moon, Sun, Edit, Save, X } from 'lucide-react';
 import './index.css';
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 function App() {
   const [activeTab, setActiveTab] = useState('study');
@@ -14,6 +14,16 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // Manage cards state for pagination, sorting, search
+  const [manageCards, setManageCards] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Dark mode state
   const [darkMode, setDarkMode] = useState(() => {
@@ -42,14 +52,51 @@ function App() {
   // Form state
   const [newCard, setNewCard] = useState({ english: '', romanian: '' });
   
+  // Edit card state
+  const [editingCard, setEditingCard] = useState(null);
+  const [editCard, setEditCard] = useState({ english: '', romanian: '' });
+  
   // Bulk import state
   const [bulkText, setBulkText] = useState('');
   const [bulkPreview, setBulkPreview] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [skipDuplicates, setSkipDuplicates] = useState(true);
+  
+  // Progress bar state for bulk import
+  const [importProgress, setImportProgress] = useState(0);
+  const [importStatus, setImportStatus] = useState('');
+  const [importInProgress, setImportInProgress] = useState(false);
+  const [importStats, setImportStats] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     fetchCards();
+    fetchManageCards();
+  }, []);
+
+  // Fetch manage cards when filters change
+  useEffect(() => {
+    if (activeTab === 'manage') {
+      fetchManageCards();
+    }
+  }, [currentPage, pageSize, sortBy, sortOrder, searchTerm, activeTab]);
+
+  // Prevent backspace from navigating back when not in input fields
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Prevent backspace from navigating back unless in input/textarea
+      if (e.key === 'Backspace' && 
+          e.target.tagName !== 'INPUT' && 
+          e.target.tagName !== 'TEXTAREA' &&
+          !e.target.isContentEditable) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   // Dark mode effect
@@ -126,12 +173,36 @@ function App() {
   const fetchCards = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/cards`);
+      const response = await axios.get(`${API_BASE_URL}/cards/all`);
       setCards(response.data);
       setError('');
     } catch (err) {
       setError('Failed to fetch cards');
       console.error('Error fetching cards:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchManageCards = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: pageSize.toString(),
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        search: searchTerm
+      });
+      
+      const response = await axios.get(`${API_BASE_URL}/cards?${params}`);
+      setManageCards(response.data.cards);
+      setTotalPages(response.data.pagination.total_pages);
+      setTotalCount(response.data.pagination.total_count);
+      setError('');
+    } catch (err) {
+      setError('Failed to fetch manage cards');
+      console.error('Error fetching manage cards:', err);
     } finally {
       setLoading(false);
     }
@@ -393,6 +464,10 @@ function App() {
       setSuccess('Card added successfully!');
       setError('');
       await fetchCards();
+      // Refresh manage cards if on manage tab
+      if (activeTab === 'manage') {
+        await fetchManageCards();
+      }
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError('Failed to add card');
@@ -410,10 +485,11 @@ function App() {
     try {
       setLoading(true);
       await axios.delete(`${API_BASE_URL}/cards/${cardId}`);
-      setSuccess('Card deleted successfully!');
-      setError('');
-      await fetchCards();
+      await fetchCards(); // Refresh the list
+      await fetchManageCards(); // Refresh manage cards list
+      setSuccess('Card deleted successfully');
       setTimeout(() => setSuccess(''), 3000);
+      setError('');
     } catch (err) {
       setError('Failed to delete card');
       console.error('Error deleting card:', err);
@@ -422,9 +498,107 @@ function App() {
     }
   };
 
+  const updateCard = async (cardId) => {
+    if (!editCard.english.trim() || !editCard.romanian.trim()) {
+      setError('Both English and Romanian text are required');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await axios.put(`${API_BASE_URL}/cards/${cardId}`, {
+        english: editCard.english,
+        romanian: editCard.romanian
+      });
+      await fetchCards(); // Refresh the list
+      await fetchManageCards(); // Refresh manage cards list
+      setEditingCard(null);
+      setEditCard({ english: '', romanian: '' });
+      setSuccess('Card updated successfully');
+      setTimeout(() => setSuccess(''), 3000);
+      setError('');
+    } catch (err) {
+      setError('Failed to update card');
+      console.error('Error updating card:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startEditing = (card) => {
+    setEditingCard(card.id);
+    setEditCard({ english: card.english, romanian: card.romanian });
+  };
+
+  const cancelEditing = () => {
+    setEditingCard(null);
+    setEditCard({ english: '', romanian: '' });
+  };
+
   const parseBulkText = (text) => {
     const cards = [];
     const lines = text.trim().split('\n');
+    
+    const isSeparatingComma = (romanianText) => {
+      // If the text contains sentence punctuation (! ? .), treat commas as part of the phrase
+      if (/[!?.]+/.test(romanianText)) {
+        return false;
+      }
+      
+      // If the text has multiple words AND common greeting/phrase patterns, likely a sentence
+      const words = romanianText.trim().split(/\s+/);
+      if (words.length > 2) { // More than 2 words usually indicates a phrase/sentence
+        return false;
+      }
+      
+      // Check for common Romanian greeting/phrase patterns that shouldn't be split
+      const phrasePatterns = [
+        'bună dimineața', 'bună ziua', 'bună seara', 'la revedere',
+        'ce mai', 'și eu', 'bine ați', 'mulțumesc', 'și tu',
+        'bună,', 'salut,'  // Greetings with names
+      ];
+      
+      const textLower = romanianText.toLowerCase();
+      for (const pattern of phrasePatterns) {
+        if (textLower.includes(pattern)) {
+          return false;
+        }
+      }
+      
+      // If we have exactly 2 words separated by comma, likely vocabulary variants
+      const commaParts = romanianText.split(',').map(part => part.trim());
+      if (commaParts.length === 2) {
+        // Check if second part starts with capital letter (likely a name)
+        if (commaParts[1] && commaParts[1][0] && commaParts[1][0] === commaParts[1][0].toUpperCase()) {
+          return false;  // Likely "Greeting, Name" format
+        }
+        
+        // Both parts should be relatively short (single words or short phrases)
+        // and both should be lowercase words (not names)
+        if (commaParts.every(part => part.split(/\s+/).length <= 2)) {
+          // Additional check: if either part contains multiple words, less likely to be vocabulary variants
+          if (commaParts.some(part => part.split(/\s+/).length > 1)) {
+            return false;
+          }
+          return true;
+        }
+      }
+      
+      // For lists of 3+ comma-separated items that are all short, likely vocabulary
+      if (commaParts.length >= 3) {
+        if (commaParts.every(part => part.split(/\s+/).length === 1)) { // All single words
+          return true;
+        }
+      }
+      
+      // Default: treat commas as part of phrase
+      return false;
+    };
+
+    const shouldSplitOnSlashes = (romanianText) => {
+      // Split on slashes if they exist (treating them as alternative forms)
+      return romanianText.includes('/');
+    };
     
     for (let line of lines) {
       line = line.trim();
@@ -448,34 +622,58 @@ function App() {
       // Skip if either part is empty or too short
       if (!romanian || !english || romanian.length < 2 || english.length < 2) continue;
       
-      // Remove trailing punctuation
+      // Store original for potential restoration
+      const originalRomanian = romanian;
+      const originalEnglish = english;
+      
+      // Remove trailing punctuation for parsing
       romanian = romanian.replace(/[!?.]+$/, '');
       english = english.replace(/[!?.]+$/, '');
       
-      // Check if Romanian side has comma-separated words
-      if (romanian.includes(',')) {
-        // Create card for the full form (original)
+      // Handle slashes as alternative forms
+      if (shouldSplitOnSlashes(romanian)) {
+        // Create card for the full form (original with punctuation restored)
         cards.push({
-          romanian: romanian,
-          english: english
+          romanian: originalRomanian,
+          english: originalEnglish
         });
         
-        // Create individual cards for each word
+        // Create individual cards for each alternative form
+        const alternatives = originalRomanian.split('/').map(alt => alt.trim());
+        for (let alt of alternatives) {
+          alt = alt.trim();
+          if (alt && alt.length >= 2) { // Skip empty or very short alternatives
+            cards.push({
+              romanian: alt,
+              english: originalEnglish
+            });
+          }
+        }
+      }
+      // Check if Romanian side has comma-separated vocabulary items vs phrases with commas
+      else if (romanian.includes(',') && isSeparatingComma(romanian)) {
+        // Create card for the full form (original with punctuation restored)
+        cards.push({
+          romanian: originalRomanian,
+          english: originalEnglish
+        });
+        
+        // Create individual cards for each vocabulary word/phrase
         const romanianWords = romanian.split(',').map(word => word.trim());
         for (let word of romanianWords) {
           word = word.trim();
           if (word && word.length >= 2) { // Skip empty or very short words
             cards.push({
               romanian: word,
-              english: english
+              english: originalEnglish
             });
           }
         }
       } else {
-        // Single word, create one card
+        // Single phrase/sentence or phrase with non-separating commas - keep as one card
         cards.push({
-          romanian: romanian,
-          english: english
+          romanian: originalRomanian,
+          english: originalEnglish
         });
       }
     }
@@ -507,30 +705,111 @@ function App() {
 
     try {
       setLoading(true);
-      const response = await axios.post(`${API_BASE_URL}/cards/bulk`, {
-        text: bulkText,
-        skip_duplicates: skipDuplicates
-      });
-      
-      const { added_count, skipped_count, total_parsed } = response.data;
-      
-      setBulkText('');
-      setBulkPreview([]);
-      setShowPreview(false);
-      
-      let message = `Successfully imported ${added_count} cards`;
-      if (skipped_count > 0) {
-        message += ` (${skipped_count} duplicates skipped)`;
-      }
-      message += ` out of ${total_parsed} parsed entries.`;
-      
-      setSuccess(message);
+      setImportInProgress(true);
+      setImportProgress(0);
+      setImportStatus('Preparing import...');
+      setImportStats({ current: 0, total: 0 });
       setError('');
-      await fetchCards();
-      setTimeout(() => setSuccess(''), 5000);
+      setSuccess(''); // Clear any previous success messages
+
+      // Use fetch with streaming to track progress
+      const response = await fetch(`${API_BASE_URL}/cards/bulk/progress`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: bulkText,
+          skip_duplicates: skipDuplicates
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Response body not available');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        
+        // Keep the last potentially incomplete line in the buffer
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.substring(6));
+              
+              if (data.type === 'progress') {
+                // Throttle progress updates to prevent rapid DOM changes
+                const now = Date.now();
+                if (!window.lastProgressUpdate || now - window.lastProgressUpdate > 100) {
+                  setImportProgress(data.percentage);
+                  setImportStatus(data.status);
+                  setImportStats({ current: data.current, total: data.total });
+                  window.lastProgressUpdate = now;
+                }
+              } else if (data.type === 'complete') {
+                setImportProgress(100);
+                setImportStatus('Import completed!');
+                
+                // Clean up
+                setBulkText('');
+                setBulkPreview([]);
+                setShowPreview(false);
+                
+                let message = `Successfully imported ${data.added_count} cards`;
+                if (data.skipped_count > 0) {
+                  message += ` (${data.skipped_count} duplicates skipped)`;
+                }
+                message += ` out of ${data.total_parsed} parsed entries.`;
+                
+                setSuccess(message);
+                await fetchCards();
+                await fetchManageCards(); // Refresh manage cards list
+                setTimeout(() => {
+                  setSuccess('');
+                  setImportInProgress(false);
+                  setImportProgress(0);
+                  setImportStatus('');
+                  setImportStats({ current: 0, total: 0 });
+                }, 3000);
+                return; // Exit the function
+              } else if (data.type === 'error') {
+                throw new Error(data.message);
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e);
+              // If it's a JSON parse error, continue; if it's a thrown error, re-throw
+              if (e.message.includes('JSON') || e.message.includes('parse')) {
+                continue;
+              } else {
+                throw e;
+              }
+            }
+          }
+        }
+      }
+
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to import cards');
+      setError(err.message || 'Failed to import cards');
       console.error('Error importing bulk cards:', err);
+      setImportInProgress(false);
+      setImportProgress(0);
+      setImportStatus('');
+      setImportStats({ current: 0, total: 0 });
     } finally {
       setLoading(false);
     }
@@ -715,7 +994,23 @@ function App() {
       {currentCard ? (
         <div 
           className="flashcard" 
-          onClick={() => {
+          onClick={(e) => {
+            // Don't handle click if it's from a keyboard event or if target is an input
+            if (e.detail === 0 || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+              return;
+            }
+            
+            // Don't flip card if user is selecting text
+            const selection = window.getSelection();
+            if (selection && selection.toString().length > 0) {
+              return;
+            }
+            
+            // Don't flip card if clicking directly on flashcard text (to allow text selection)
+            if (e.target.classList.contains('flashcard-text')) {
+              return;
+            }
+            
             if (allowClickInTimer || !timerMode) {
               if (timerMode && timerActive && !showAnswer) {
                 // Stop timer when clicking early
@@ -725,6 +1020,23 @@ function App() {
               setShowAnswer(!showAnswer);
             }
           }}
+          onKeyDown={(e) => {
+            // Only handle Space and Enter keys for flashcard interaction
+            if (e.key === ' ' || e.key === 'Enter') {
+              // Only if we're not in an input field
+              if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                if (allowClickInTimer || !timerMode) {
+                  if (timerMode && timerActive && !showAnswer) {
+                    setTimerActive(false);
+                    setTimeLeft(0);
+                  }
+                  setShowAnswer(!showAnswer);
+                }
+              }
+            }
+          }}
+          tabIndex={0}
           style={{ 
             cursor: (allowClickInTimer || !timerMode) ? 'pointer' : 'default'
           }}
@@ -912,14 +1224,19 @@ function App() {
       <div className="info-section">
         <strong>Format:</strong> Paste text with Romanian:English pairs, one per line.
         <br />
+        <strong>Alternative forms:</strong> Use "/" to separate alternative Romanian phrases that have the same English meaning.
+        <br />
         <strong>Example:</strong>
         <pre>
 {`ceai: tea
 cine: who
 Bună dimineața!: Good morning!
-La revedere!: Goodbye!`}
+La revedere!: Goodbye!
+Cum te numești? / cum te cheamă?: What is your name?`}
         </pre>
         Section headers (without colons) will be automatically skipped.
+        <br />
+        Lines with "/" will create both a combined card and individual cards for each alternative form.
       </div>
       
       <div className="form-group">
@@ -949,7 +1266,7 @@ La revedere!: Goodbye!`}
         <button 
           className="btn btn-secondary" 
           onClick={previewBulkCards}
-          disabled={!bulkText.trim() || loading}
+          disabled={!bulkText.trim() || loading || importInProgress}
         >
           <FileText size={20} />
           Preview ({bulkPreview.length} cards)
@@ -958,12 +1275,35 @@ La revedere!: Goodbye!`}
         <button 
           className="btn btn-success" 
           onClick={addBulkCards}
-          disabled={!bulkText.trim() || loading}
+          disabled={!bulkText.trim() || loading || importInProgress}
         >
           <Upload size={20} />
-          Import Cards
+          {importInProgress ? 'Importing...' : 'Import Cards'}
         </button>
       </div>
+      
+      {/* Progress Bar */}
+      {importInProgress && (
+        <div className="import-progress">
+          <div className="import-progress-header">
+            <span className="import-progress-title">
+              📊 Import Progress: {importStats.current} / {importStats.total} cards
+            </span>
+            <span className="import-progress-percent">
+              {importProgress}%
+            </span>
+          </div>
+          <div className="import-progress-bar">
+            <div 
+              className="import-progress-fill"
+              style={{ width: `${importProgress}%` }}
+            ></div>
+          </div>
+          <div className="import-progress-status">
+            {importStatus}
+          </div>
+        </div>
+      )}
       
       {showPreview && bulkPreview.length > 0 && (
         <div className="bulk-preview">
@@ -989,41 +1329,250 @@ La revedere!: Goodbye!`}
     </div>
   );
 
-  const ManageCardsTab = () => (
-    <div className="card">
-      <h2 className="component-title">
-        Manage Cards ({cards.length} total)
-      </h2>
+  const ManageCardsTab = () => {
+    const handleSearchChange = (e) => {
+      setSearchTerm(e.target.value);
+      setCurrentPage(1); // Reset to first page when searching
+    };
+
+    const handleSortChange = (field) => {
+      if (sortBy === field) {
+        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      } else {
+        setSortBy(field);
+        setSortOrder('asc');
+      }
+      setCurrentPage(1); // Reset to first page when sorting
+    };
+
+    const handlePageSizeChange = (e) => {
+      setPageSize(parseInt(e.target.value));
+      setCurrentPage(1); // Reset to first page when changing page size
+    };
+
+    const handlePageChange = (page) => {
+      setCurrentPage(page);
+    };
+
+    const getSortIcon = (field) => {
+      if (sortBy !== field) return '↕️';
+      return sortOrder === 'asc' ? '↑' : '↓';
+    };
+
+    const generatePageNumbers = () => {
+      const pages = [];
+      const maxVisiblePages = 5;
+      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
       
-      {cards.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">📚</div>
-          <p>No flashcards yet. Add some cards to get started!</p>
-        </div>
-      ) : (
-        <div className="card-list">
-          {cards.map((card) => (
-            <div key={card.id} className="card-item">
-              <div className="card-content">
-                <div className="card-english">{card.english}</div>
-                <div className="card-romanian">{card.romanian}</div>
-              </div>
-              <div className="card-actions">
-                <button
-                  className="btn btn-danger btn-small"
-                  onClick={() => deleteCard(card.id)}
-                  disabled={loading}
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
+      // Adjust start if we're near the end
+      if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+      }
+      
+      for (let i = startPage; i <= endPage; i++) {
+        pages.push(i);
+      }
+      return pages;
+    };
+
+    return (
+      <div className="card">
+        <div className="manage-cards-header">
+          <h2 className="component-title">
+            Manage Cards ({totalCount} total)
+          </h2>
+          
+          {/* Search and Controls */}
+          <div className="manage-controls">
+            <div className="search-section">
+              <input
+                type="text"
+                placeholder="Search cards..."
+                value={searchTerm}
+                onChange={handleSearchChange}
+                className="search-input"
+              />
+            </div>
+            
+            <div className="controls-section">
+              <div className="page-size-control">
+                <label>Show:</label>
+                <select value={pageSize} onChange={handlePageSizeChange}>
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+                <span>per page</span>
               </div>
             </div>
-          ))}
+          </div>
         </div>
-      )}
-    </div>
-  );
+        
+        {totalCount === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">📚</div>
+            <p>{searchTerm ? 'No cards found matching your search.' : 'No flashcards yet. Add some cards to get started!'}</p>
+          </div>
+        ) : (
+          <>
+            {/* Sort Headers */}
+            <div className="sort-headers">
+              <button 
+                className={`sort-header ${sortBy === 'english' ? 'active' : ''}`}
+                onClick={() => handleSortChange('english')}
+              >
+                English {getSortIcon('english')}
+              </button>
+              <button 
+                className={`sort-header ${sortBy === 'romanian' ? 'active' : ''}`}
+                onClick={() => handleSortChange('romanian')}
+              >
+                Romanian {getSortIcon('romanian')}
+              </button>
+              <button 
+                className={`sort-header ${sortBy === 'created_at' ? 'active' : ''}`}
+                onClick={() => handleSortChange('created_at')}
+              >
+                Date Created {getSortIcon('created_at')}
+              </button>
+              <div className="sort-header-actions">Actions</div>
+            </div>
+
+            {/* Cards List */}
+            <div className="card-list">
+              {manageCards.map((card) => (
+                <div key={card.id} className="card-item">
+                  {editingCard === card.id ? (
+                    // Edit mode
+                    <div className="card-edit-form">
+                      <div className="form-group">
+                        <label>English:</label>
+                        <input
+                          type="text"
+                          value={editCard.english}
+                          onChange={(e) => setEditCard({ ...editCard, english: e.target.value })}
+                          placeholder="Enter English text"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Romanian:</label>
+                        <input
+                          type="text"
+                          value={editCard.romanian}
+                          onChange={(e) => setEditCard({ ...editCard, romanian: e.target.value })}
+                          placeholder="Enter Romanian text"
+                        />
+                      </div>
+                      <div className="card-actions">
+                        <button
+                          className="btn btn-success btn-small"
+                          onClick={() => updateCard(card.id)}
+                          disabled={loading || !editCard.english.trim() || !editCard.romanian.trim()}
+                        >
+                          <Save size={16} />
+                          Save
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-small"
+                          onClick={cancelEditing}
+                          disabled={loading}
+                        >
+                          <X size={16} />
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    // View mode
+                    <>
+                      <div className="card-content">
+                        <div className="card-english">{card.english}</div>
+                        <div className="card-romanian">{card.romanian}</div>
+                        <div className="card-date">
+                          {new Date(card.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <div className="card-actions">
+                        <button
+                          className="btn btn-secondary btn-small"
+                          onClick={() => startEditing(card)}
+                          disabled={loading || editingCard !== null}
+                        >
+                          <Edit size={16} />
+                          Edit
+                        </button>
+                        <button
+                          className="btn btn-danger btn-small"
+                          onClick={() => deleteCard(card.id)}
+                          disabled={loading || editingCard !== null}
+                        >
+                          <Trash2 size={16} />
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="pagination">
+                <div className="pagination-info">
+                  Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalCount)} of {totalCount} cards
+                </div>
+                
+                <div className="pagination-controls">
+                  <button
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handlePageChange(1)}
+                    disabled={currentPage === 1}
+                  >
+                    First
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    Previous
+                  </button>
+                  
+                  {generatePageNumbers().map(page => (
+                    <button
+                      key={page}
+                      className={`btn btn-small ${page === currentPage ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => handlePageChange(page)}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  
+                  <button
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handlePageChange(totalPages)}
+                    disabled={currentPage === totalPages}
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className={`container ${darkMode ? 'dark-mode' : ''}`}>

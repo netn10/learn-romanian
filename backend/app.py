@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson import ObjectId
@@ -6,6 +6,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 import os
 import re
+import json
+import time
 
 # Load environment variables from .env file
 load_dotenv()
@@ -43,6 +45,71 @@ def parse_bulk_cards(text):
     cards = []
     lines = text.strip().split("\n")
 
+    def is_separating_comma(romanian_text):
+        """
+        Determine if commas in the Romanian text are separating different words/phrases
+        or are part of the actual phrase (like in sentences or greetings).
+
+        Separating commas typically appear in vocabulary lists like:
+        - "doamnă, doamne: madam / lady"
+        - "domn, domni: sir / mister"
+
+        Non-separating commas appear in phrases/sentences like:
+        - "Bună dimineața, doamnă!: Good morning, madam!"
+        - "Bine, mulțumesc: Fine, thank you"
+        """
+        # If the text contains sentence punctuation (! ? .), treat commas as part of the phrase
+        if any(punct in romanian_text for punct in ["!", "?", "."]):
+            return False
+
+        # If the text has multiple words AND common greeting/phrase patterns, likely a sentence
+        words = romanian_text.strip().split()
+        if len(words) > 2:  # More than 2 words usually indicates a phrase/sentence
+            return False
+
+        # Check for common Romanian greeting/phrase patterns that shouldn't be split
+        phrase_patterns = [
+            "bună dimineața",
+            "bună ziua",
+            "bună seara",
+            "la revedere",
+            "ce mai",
+            "și eu",
+            "bine ați",
+            "mulțumesc",
+            "și tu",
+            "bună,",  # Greetings with names
+            "salut,",  # Greetings with names
+        ]
+
+        text_lower = romanian_text.lower()
+        for pattern in phrase_patterns:
+            if pattern in text_lower:
+                return False
+
+        # If we have exactly 2 words separated by comma, likely vocabulary variants
+        comma_parts = [part.strip() for part in romanian_text.split(",")]
+        if len(comma_parts) == 2:
+            # Check if second part starts with capital letter (likely a name)
+            if comma_parts[1] and comma_parts[1][0].isupper():
+                return False  # Likely "Greeting, Name" format
+
+            # Both parts should be relatively short (single words or short phrases)
+            # and both should be lowercase words (not names)
+            if all(len(part.split()) <= 2 for part in comma_parts):
+                # Additional check: if either part contains multiple words, less likely to be vocabulary variants
+                if any(len(part.split()) > 1 for part in comma_parts):
+                    return False
+                return True
+
+        # For lists of 3+ comma-separated items that are all short, likely vocabulary
+        if len(comma_parts) >= 3:
+            if all(len(part.split()) == 1 for part in comma_parts):  # All single words
+                return True
+
+        # Default: treat commas as part of phrase
+        return False
+
     for line in lines:
         line = line.strip()
 
@@ -70,7 +137,11 @@ def parse_bulk_cards(text):
         if not romanian or not english:
             continue
 
-        # Remove any trailing punctuation that might interfere
+        # Store original for potential restoration
+        original_romanian = romanian
+        original_english = english
+
+        # Remove any trailing punctuation that might interfere with parsing
         romanian = romanian.rstrip("!?.")
         english = english.rstrip("!?.")
 
@@ -78,28 +149,132 @@ def parse_bulk_cards(text):
         if len(romanian) < 2 or len(english) < 2:
             continue
 
-        # Check if Romanian side has comma-separated words
-        if "," in romanian:
-            # Create card for the full form (original)
-            cards.append({"romanian": romanian, "english": english})
+        # Handle slashes as alternative forms (takes priority over comma handling)
+        if "/" in romanian:
+            # Create card for the full form (original with punctuation restored)
+            cards.append({"romanian": original_romanian, "english": original_english})
 
-            # Create individual cards for each word
+            # Create individual cards for each alternative form
+            alternatives = [alt.strip() for alt in original_romanian.split("/")]
+            for alt in alternatives:
+                alt = alt.strip()
+                if alt and len(alt) >= 2:  # Skip empty or very short alternatives
+                    cards.append({"romanian": alt, "english": original_english})
+        # Check if Romanian side has comma-separated vocabulary items vs phrases with commas
+        elif "," in romanian and is_separating_comma(romanian):
+            # Create card for the full form (original with punctuation restored)
+            cards.append({"romanian": original_romanian, "english": original_english})
+
+            # Create individual cards for each vocabulary word/phrase
             romanian_words = [word.strip() for word in romanian.split(",")]
             for word in romanian_words:
                 word = word.strip()
                 if word and len(word) >= 2:  # Skip empty or very short words
-                    cards.append({"romanian": word, "english": english})
+                    cards.append({"romanian": word, "english": original_english})
         else:
-            # Single word, create one card
-            cards.append({"romanian": romanian, "english": english})
+            # Single phrase/sentence or phrase with non-separating commas - keep as one card
+            cards.append({"romanian": original_romanian, "english": original_english})
 
     return cards
 
 
 # API Routes
+@app.route("/api/cards/bulk/progress", methods=["POST"])
+def add_bulk_cards_with_progress():
+    """Add multiple flashcards from bulk text with progress tracking"""
+    try:
+        data = request.get_json()
+        print(f"Received bulk import request with progress: {data}")  # Debug log
+
+        if not data or "text" not in data:
+            return jsonify({"error": "Bulk text is required"}), 400
+
+        # Parse the bulk text
+        parsed_cards = parse_bulk_cards(data["text"])
+        print(f"Parsed {len(parsed_cards)} cards")  # Debug log
+
+        if not parsed_cards:
+            return jsonify({"error": "No valid card pairs found in text"}), 400
+
+        # Check for duplicates (optional - skip existing cards)
+        skip_duplicates = data.get("skip_duplicates", True)
+        added_cards = []
+        skipped_count = 0
+        total_cards = len(parsed_cards)
+
+        def generate_progress():
+            """Generator function for progress updates"""
+            nonlocal added_cards, skipped_count
+
+            # Send initial progress
+            yield f"data: {json.dumps({'type': 'progress', 'current': 0, 'total': total_cards, 'percentage': 0, 'status': 'Starting import...'})}\n\n"
+
+            batch_size = max(
+                1, total_cards // 20
+            )  # Process in batches for smooth progress
+
+            for i, card_data in enumerate(parsed_cards):
+                try:
+                    if skip_duplicates:
+                        # Check if card already exists (same Romanian text)
+                        existing = cards_collection.find_one(
+                            {"romanian": card_data["romanian"]}
+                        )
+                        if existing:
+                            skipped_count += 1
+                            continue
+
+                    # Add the card
+                    card = {
+                        "english": card_data["english"],
+                        "romanian": card_data["romanian"],
+                        "created_at": datetime.utcnow(),
+                    }
+
+                    result = cards_collection.insert_one(card)
+                    card["_id"] = result.inserted_id
+                    added_cards.append(card_to_dict(card))
+
+                except Exception as card_error:
+                    print(f"Error processing individual card {i+1}: {card_error}")
+                    continue
+
+                # Send progress update
+                current = i + 1
+                percentage = int((current / total_cards) * 100)
+                status = f"Processing card {current}/{total_cards} - {card_data['romanian'][:30]}..."
+
+                yield f"data: {json.dumps({'type': 'progress', 'current': current, 'total': total_cards, 'percentage': percentage, 'status': status})}\n\n"
+
+                # Small delay to make progress visible
+                if i % batch_size == 0:
+                    time.sleep(0.05)
+
+            # Send completion message
+            final_message = (
+                f"Import complete: {len(added_cards)} added, {skipped_count} skipped"
+            )
+            yield f"data: {json.dumps({'type': 'complete', 'added_count': len(added_cards), 'skipped_count': skipped_count, 'total_parsed': total_cards, 'message': final_message})}\n\n"
+
+        return Response(
+            generate_progress(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
+
+    except Exception as e:
+        print(f"Bulk import error: {str(e)}")
+        return jsonify({"error": f"Import failed: {str(e)}"}), 500
+
+
 @app.route("/api/cards/bulk", methods=["POST"])
 def add_bulk_cards():
-    """Add multiple flashcards from bulk text"""
+    """Add multiple flashcards from bulk text (legacy endpoint)"""
     try:
         data = request.get_json()
         print(f"Received bulk import request: {data}")  # Debug log
@@ -156,9 +331,7 @@ def add_bulk_cards():
                 # Continue with other cards instead of failing completely
                 continue
 
-        print(
-            f"Import complete: {len(added_cards)} added, {skipped_count} skipped"
-        )  # Debug log
+        print(f"Import complete: {len(added_cards)} added, {skipped_count} skipped")
 
         return (
             jsonify(
@@ -184,7 +357,79 @@ def add_bulk_cards():
 
 @app.route("/api/cards", methods=["GET"])
 def get_cards():
-    """Get all flashcards"""
+    """Get flashcards with optional pagination, sorting, and search"""
+    try:
+        # Get query parameters
+        page = int(request.args.get("page", 1))
+        limit = int(request.args.get("limit", 10))
+        sort_by = request.args.get("sort_by", "created_at")
+        sort_order = request.args.get("sort_order", "desc")
+        search = request.args.get("search", "").strip()
+
+        # Validate parameters
+        page = max(1, page)
+        limit = min(100, max(1, limit))  # Cap at 100 items per page
+
+        # Valid sort fields
+        valid_sort_fields = ["created_at", "english", "romanian"]
+        if sort_by not in valid_sort_fields:
+            sort_by = "created_at"
+
+        # Sort order
+        sort_direction = -1 if sort_order.lower() == "desc" else 1
+
+        # Build query
+        query = {}
+        if search:
+            # Case-insensitive search in both english and romanian fields
+            query = {
+                "$or": [
+                    {"english": {"$regex": search, "$options": "i"}},
+                    {"romanian": {"$regex": search, "$options": "i"}},
+                ]
+            }
+
+        # Get total count for pagination
+        total_count = cards_collection.count_documents(query)
+
+        # Calculate pagination
+        skip = (page - 1) * limit
+        total_pages = (total_count + limit - 1) // limit
+
+        # Get cards with pagination and sorting
+        cards = list(
+            cards_collection.find(query)
+            .sort(sort_by, sort_direction)
+            .skip(skip)
+            .limit(limit)
+        )
+
+        # Return paginated response
+        return jsonify(
+            {
+                "cards": [card_to_dict(card) for card in cards],
+                "pagination": {
+                    "current_page": page,
+                    "total_pages": total_pages,
+                    "total_count": total_count,
+                    "page_size": limit,
+                    "has_next": page < total_pages,
+                    "has_prev": page > 1,
+                },
+                "filters": {
+                    "search": search,
+                    "sort_by": sort_by,
+                    "sort_order": sort_order,
+                },
+            }
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cards/all", methods=["GET"])
+def get_all_cards():
+    """Get all flashcards (for study mode)"""
     try:
         cards = list(cards_collection.find().sort("created_at", -1))
         return jsonify([card_to_dict(card) for card in cards])
