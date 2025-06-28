@@ -32,6 +32,7 @@ def card_to_dict(card):
         "id": str(card["_id"]),
         "english": card["english"],
         "romanian": card["romanian"],
+        "tags": card.get("tags", []),  # Default to empty list for older cards
         "created_at": (
             card["created_at"].isoformat()
             if isinstance(card["created_at"], datetime)
@@ -149,31 +150,68 @@ def parse_bulk_cards(text):
         if len(romanian) < 2 or len(english) < 2:
             continue
 
+        # Extract tags from English text if present (format: "text [tag1, tag2]")
+        tags = []
+        if "[" in english and "]" in english:
+            # Extract tags from square brackets
+            tag_start = english.rfind("[")
+            tag_end = english.rfind("]")
+            if tag_start < tag_end:
+                tag_text = english[tag_start + 1 : tag_end]
+                tags = [
+                    tag.strip().lower() for tag in tag_text.split(",") if tag.strip()
+                ]
+                # Remove tags from English text
+                english = english[:tag_start].strip()
+                original_english = english
+
         # Handle slashes as alternative forms (takes priority over comma handling)
         if "/" in romanian:
             # Create card for the full form (original with punctuation restored)
-            cards.append({"romanian": original_romanian, "english": original_english})
+            cards.append(
+                {
+                    "romanian": original_romanian,
+                    "english": original_english,
+                    "tags": tags,
+                }
+            )
 
             # Create individual cards for each alternative form
             alternatives = [alt.strip() for alt in original_romanian.split("/")]
             for alt in alternatives:
                 alt = alt.strip()
                 if alt and len(alt) >= 2:  # Skip empty or very short alternatives
-                    cards.append({"romanian": alt, "english": original_english})
+                    cards.append(
+                        {"romanian": alt, "english": original_english, "tags": tags}
+                    )
         # Check if Romanian side has comma-separated vocabulary items vs phrases with commas
         elif "," in romanian and is_separating_comma(romanian):
             # Create card for the full form (original with punctuation restored)
-            cards.append({"romanian": original_romanian, "english": original_english})
+            cards.append(
+                {
+                    "romanian": original_romanian,
+                    "english": original_english,
+                    "tags": tags,
+                }
+            )
 
             # Create individual cards for each vocabulary word/phrase
             romanian_words = [word.strip() for word in romanian.split(",")]
             for word in romanian_words:
                 word = word.strip()
                 if word and len(word) >= 2:  # Skip empty or very short words
-                    cards.append({"romanian": word, "english": original_english})
+                    cards.append(
+                        {"romanian": word, "english": original_english, "tags": tags}
+                    )
         else:
             # Single phrase/sentence or phrase with non-separating commas - keep as one card
-            cards.append({"romanian": original_romanian, "english": original_english})
+            cards.append(
+                {
+                    "romanian": original_romanian,
+                    "english": original_english,
+                    "tags": tags,
+                }
+            )
 
     return cards
 
@@ -228,6 +266,7 @@ def add_bulk_cards_with_progress():
                     card = {
                         "english": card_data["english"],
                         "romanian": card_data["romanian"],
+                        "tags": card_data.get("tags", []),
                         "created_at": datetime.utcnow(),
                     }
 
@@ -314,6 +353,7 @@ def add_bulk_cards():
                 card = {
                     "english": card_data["english"],
                     "romanian": card_data["romanian"],
+                    "tags": card_data.get("tags", []),
                     "created_at": datetime.utcnow(),
                 }
 
@@ -381,11 +421,12 @@ def get_cards():
         # Build query
         query = {}
         if search:
-            # Case-insensitive search in both english and romanian fields
+            # Case-insensitive search in english, romanian, and tags fields
             query = {
                 "$or": [
                     {"english": {"$regex": search, "$options": "i"}},
                     {"romanian": {"$regex": search, "$options": "i"}},
+                    {"tags": {"$regex": search, "$options": "i"}},
                 ]
             }
 
@@ -446,9 +487,25 @@ def add_card():
         if not data or "english" not in data or "romanian" not in data:
             return jsonify({"error": "English and Romanian text are required"}), 400
 
+        # Process tags - ensure they're cleaned and unique
+        tags = []
+        if "tags" in data and data["tags"]:
+            if isinstance(data["tags"], list):
+                tags = [tag.strip().lower() for tag in data["tags"] if tag.strip()]
+            elif isinstance(data["tags"], str):
+                # Handle comma-separated tags from text input
+                tags = [
+                    tag.strip().lower()
+                    for tag in data["tags"].split(",")
+                    if tag.strip()
+                ]
+            # Remove duplicates while preserving order
+            tags = list(dict.fromkeys(tags))
+
         card = {
             "english": data["english"].strip(),
             "romanian": data["romanian"].strip(),
+            "tags": tags,
             "created_at": datetime.utcnow(),
         }
 
@@ -494,6 +551,22 @@ def update_card(card_id):
             update_data["english"] = data["english"].strip()
         if "romanian" in data:
             update_data["romanian"] = data["romanian"].strip()
+        if "tags" in data:
+            # Process tags - ensure they're cleaned and unique
+            tags = []
+            if data["tags"]:
+                if isinstance(data["tags"], list):
+                    tags = [tag.strip().lower() for tag in data["tags"] if tag.strip()]
+                elif isinstance(data["tags"], str):
+                    # Handle comma-separated tags from text input
+                    tags = [
+                        tag.strip().lower()
+                        for tag in data["tags"].split(",")
+                        if tag.strip()
+                    ]
+                # Remove duplicates while preserving order
+                tags = list(dict.fromkeys(tags))
+            update_data["tags"] = tags
 
         if not update_data:
             return jsonify({"error": "No valid fields to update"}), 400
@@ -523,6 +596,78 @@ def get_random_card():
             return jsonify({"error": "No cards available"}), 404
 
         return jsonify(card_to_dict(cards[0]))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/tags", methods=["GET"])
+def get_all_tags():
+    """Get all unique tags from flashcards"""
+    try:
+        # Use MongoDB aggregation to get all unique tags
+        pipeline = [
+            {"$unwind": "$tags"},  # Separate array elements into individual documents
+            {"$group": {"_id": "$tags"}},  # Group by tag to get unique values
+            {"$sort": {"_id": 1}},  # Sort alphabetically
+            {"$project": {"tag": "$_id", "_id": 0}},  # Rename field and exclude _id
+        ]
+
+        result = list(cards_collection.aggregate(pipeline))
+        tags = [item["tag"] for item in result]
+
+        return jsonify({"tags": tags})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cards/by-tag/<tag>", methods=["GET"])
+def get_cards_by_tag(tag):
+    """Get flashcards that have a specific tag"""
+    try:
+        # Case-insensitive tag search
+        cards = list(
+            cards_collection.find({"tags": {"$regex": f"^{tag}$", "$options": "i"}})
+        )
+        return jsonify([card_to_dict(card) for card in cards])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cards/filter", methods=["GET"])
+def filter_cards():
+    """Filter cards by multiple criteria including tags"""
+    try:
+        tags = request.args.getlist("tags")  # Get multiple tag parameters
+        search = request.args.get("search", "").strip()
+
+        query = {}
+        conditions = []
+
+        # Tag filtering
+        if tags:
+            # Match cards that have ANY of the specified tags (OR condition)
+            tag_conditions = [
+                {"tags": {"$regex": f"^{tag}$", "$options": "i"}} for tag in tags
+            ]
+            conditions.append({"$or": tag_conditions})
+
+        # Text search
+        if search:
+            conditions.append(
+                {
+                    "$or": [
+                        {"english": {"$regex": search, "$options": "i"}},
+                        {"romanian": {"$regex": search, "$options": "i"}},
+                    ]
+                }
+            )
+
+        # Combine conditions with AND
+        if conditions:
+            query = {"$and": conditions} if len(conditions) > 1 else conditions[0]
+
+        cards = list(cards_collection.find(query).sort("created_at", -1))
+        return jsonify([card_to_dict(card) for card in cards])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

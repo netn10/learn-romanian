@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { Shuffle, Plus, BookOpen, List, RotateCcw, Trash2, Upload, FileText, Clock, Play, Pause, SkipForward, Volume2, Moon, Sun, Edit, Save, X } from 'lucide-react';
 import './index.css';
@@ -12,6 +12,7 @@ function App() {
   const [showAnswer, setShowAnswer] = useState(false);
   const [isFlipped, setIsFlipped] = useState(false); // true = Romanian to English, false = English to Romanian
   const [loading, setLoading] = useState(false);
+  const [manageLoading, setManageLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -24,6 +25,7 @@ function App() {
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState('desc');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
 
   // Dark mode state
   const [darkMode, setDarkMode] = useState(() => {
@@ -50,11 +52,16 @@ function App() {
   const [deckProgress, setDeckProgress] = useState(0);
 
   // Form state
-  const [newCard, setNewCard] = useState({ english: '', romanian: '' });
+  const [newCard, setNewCard] = useState({ english: '', romanian: '', tags: '' });
   
   // Edit card state
   const [editingCard, setEditingCard] = useState(null);
-  const [editCard, setEditCard] = useState({ english: '', romanian: '' });
+  const [editCard, setEditCard] = useState({ english: '', romanian: '', tags: '' });
+  
+  // Tags state
+  const [allTags, setAllTags] = useState([]);
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [tagFilter, setTagFilter] = useState('');
   
   // Bulk import state
   const [bulkText, setBulkText] = useState('');
@@ -68,17 +75,29 @@ function App() {
   const [importInProgress, setImportInProgress] = useState(false);
   const [importStats, setImportStats] = useState({ current: 0, total: 0 });
 
+  const bulkTextRef = useRef(null);
+
   useEffect(() => {
     fetchCards();
     fetchManageCards();
+    fetchAllTags();
   }, []);
+
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300); // 300ms delay
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   // Fetch manage cards when filters change
   useEffect(() => {
     if (activeTab === 'manage') {
       fetchManageCards();
     }
-  }, [currentPage, pageSize, sortBy, sortOrder, searchTerm, activeTab]);
+  }, [currentPage, pageSize, sortBy, sortOrder, debouncedSearchTerm, selectedTags, activeTab]);
 
   // Prevent backspace from navigating back when not in input fields
   useEffect(() => {
@@ -186,25 +205,74 @@ function App() {
 
   const fetchManageCards = async () => {
     try {
-      setLoading(true);
-      const params = new URLSearchParams({
-        page: currentPage.toString(),
-        limit: pageSize.toString(),
-        sort_by: sortBy,
-        sort_order: sortOrder,
-        search: searchTerm
-      });
+      setManageLoading(true);
       
-      const response = await axios.get(`${API_BASE_URL}/cards?${params}`);
-      setManageCards(response.data.cards);
-      setTotalPages(response.data.pagination.total_pages);
-      setTotalCount(response.data.pagination.total_count);
+      // If tags are selected, use the filter endpoint
+      if (selectedTags.length > 0) {
+        const params = new URLSearchParams();
+        selectedTags.forEach(tag => params.append('tags', tag));
+        if (debouncedSearchTerm.trim()) {
+          params.append('search', debouncedSearchTerm);
+        }
+        
+        const response = await axios.get(`${API_BASE_URL}/cards/filter?${params}`);
+        const allFilteredCards = response.data;
+        
+        // Apply client-side pagination and sorting for filtered results
+        const sortedCards = [...allFilteredCards].sort((a, b) => {
+          if (sortBy === 'created_at') {
+            const dateA = new Date(a.created_at);
+            const dateB = new Date(b.created_at);
+            return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+          } else {
+            const valA = (a[sortBy] || '').toLowerCase();
+            const valB = (b[sortBy] || '').toLowerCase();
+            if (sortOrder === 'desc') {
+              return valB.localeCompare(valA);
+            } else {
+              return valA.localeCompare(valB);
+            }
+          }
+        });
+        
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        const paginatedCards = sortedCards.slice(startIndex, endIndex);
+        
+        setManageCards(paginatedCards);
+        setTotalCount(sortedCards.length);
+        setTotalPages(Math.ceil(sortedCards.length / pageSize));
+      } else {
+        // Use regular paginated endpoint when no tags selected
+        const params = new URLSearchParams({
+          page: currentPage.toString(),
+          limit: pageSize.toString(),
+          sort_by: sortBy,
+          sort_order: sortOrder,
+          search: debouncedSearchTerm
+        });
+        
+        const response = await axios.get(`${API_BASE_URL}/cards?${params}`);
+        setManageCards(response.data.cards);
+        setTotalPages(response.data.pagination.total_pages);
+        setTotalCount(response.data.pagination.total_count);
+      }
+      
       setError('');
     } catch (err) {
       setError('Failed to fetch manage cards');
       console.error('Error fetching manage cards:', err);
     } finally {
-      setLoading(false);
+      setManageLoading(false);
+    }
+  };
+
+  const fetchAllTags = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/tags`);
+      setAllTags(response.data.tags);
+    } catch (err) {
+      console.error('Error fetching tags:', err);
     }
   };
 
@@ -459,15 +527,24 @@ function App() {
 
     try {
       setLoading(true);
-      await axios.post(`${API_BASE_URL}/cards`, newCard);
-      setNewCard({ english: '', romanian: '' });
+      
+      // Prepare card data with tags
+      const cardData = {
+        english: newCard.english.trim(),
+        romanian: newCard.romanian.trim(),
+        tags: newCard.tags.trim()
+      };
+      
+      await axios.post(`${API_BASE_URL}/cards`, cardData);
+      setNewCard({ english: '', romanian: '', tags: '' });
       setSuccess('Card added successfully!');
       setError('');
       await fetchCards();
-      // Refresh manage cards if on manage tab
+      // Refresh manage cards and tags
       if (activeTab === 'manage') {
         await fetchManageCards();
       }
+      await fetchAllTags();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError('Failed to add card');
@@ -508,12 +585,14 @@ function App() {
       setLoading(true);
       await axios.put(`${API_BASE_URL}/cards/${cardId}`, {
         english: editCard.english,
-        romanian: editCard.romanian
+        romanian: editCard.romanian,
+        tags: editCard.tags
       });
       await fetchCards(); // Refresh the list
       await fetchManageCards(); // Refresh manage cards list
+      await fetchAllTags(); // Refresh tags
       setEditingCard(null);
-      setEditCard({ english: '', romanian: '' });
+      setEditCard({ english: '', romanian: '', tags: '' });
       setSuccess('Card updated successfully');
       setTimeout(() => setSuccess(''), 3000);
       setError('');
@@ -527,12 +606,16 @@ function App() {
 
   const startEditing = (card) => {
     setEditingCard(card.id);
-    setEditCard({ english: card.english, romanian: card.romanian });
+    setEditCard({ 
+      english: card.english, 
+      romanian: card.romanian,
+      tags: card.tags ? card.tags.join(', ') : ''
+    });
   };
 
   const cancelEditing = () => {
     setEditingCard(null);
-    setEditCard({ english: '', romanian: '' });
+    setEditCard({ english: '', romanian: '', tags: '' });
   };
 
   const parseBulkText = (text) => {
@@ -815,7 +898,7 @@ function App() {
     }
   };
 
-  const StudyTab = () => (
+  const StudyTab = useMemo(() => (
     <div className="card">
       {/* Game Options */}
       <div className="study-controls">
@@ -1180,9 +1263,9 @@ function App() {
         </div>
       )}
     </div>
-  );
+  ), [timerMode, ttsEnabled, shuffledDeckMode, cards, completedCards, deckProgress, remainingCards, timerDuration, timerActive, allowClickInTimer, currentCard, timeLeft, loading, showAnswer, isFlipped, startTimer, pauseTimer, skipTimer, resetTimer, nextCard, getShuffledCard, initializeShuffledDeck, getRandomCard, speakRomanian, speakEnglish, speaking]);
 
-  const AddCardTab = () => (
+  const AddCardTab = useMemo(() => (
     <div className="card">
       <h2 className="component-title">Add New Flashcard</h2>
       
@@ -1209,15 +1292,29 @@ function App() {
           />
         </div>
         
+        <div className="form-group">
+          <label htmlFor="tags">Tags (optional):</label>
+          <input
+            type="text"
+            id="tags"
+            value={newCard.tags}
+            onChange={(e) => setNewCard({ ...newCard, tags: e.target.value })}
+            placeholder="Enter tags separated by commas (e.g., greetings, questions, food)"
+          />
+          <small className="form-help">
+            Add tags to categorize your cards. Separate multiple tags with commas.
+          </small>
+        </div>
+        
         <button type="submit" className="btn btn-success" disabled={loading}>
           <Plus size={20} />
           Add Card
         </button>
       </form>
     </div>
-  );
+  ), [newCard, loading, addCard]);
 
-  const BulkImportTab = () => (
+  const BulkImportTab = useMemo(() => (
     <div className="card">
       <h2 className="component-title">Bulk Import Cards</h2>
       
@@ -1226,13 +1323,15 @@ function App() {
         <br />
         <strong>Alternative forms:</strong> Use "/" to separate alternative Romanian phrases that have the same English meaning.
         <br />
+        <strong>Tags:</strong> Add tags in square brackets after English text: "text [tag1, tag2]"
+        <br />
         <strong>Example:</strong>
         <pre>
-{`ceai: tea
-cine: who
-Bună dimineața!: Good morning!
-La revedere!: Goodbye!
-Cum te numești? / cum te cheamă?: What is your name?`}
+{`ceai: tea [drinks]
+cine: who [questions]
+Bună dimineața!: Good morning! [greetings]
+La revedere!: Goodbye! [greetings]
+Cum te numești? / cum te cheamă?: What is your name? [questions]`}
         </pre>
         Section headers (without colons) will be automatically skipped.
         <br />
@@ -1242,6 +1341,7 @@ Cum te numești? / cum te cheamă?: What is your name?`}
       <div className="form-group">
         <label htmlFor="bulkText">Paste your text here:</label>
         <textarea
+          ref={bulkTextRef}
           id="bulkText"
           value={bulkText}
           onChange={(e) => setBulkText(e.target.value)}
@@ -1278,7 +1378,7 @@ Cum te numești? / cum te cheamă?: What is your name?`}
           disabled={!bulkText.trim() || loading || importInProgress}
         >
           <Upload size={20} />
-          {importInProgress ? 'Importing...' : 'Import Cards'}
+          {importInProgress ? 'Importing..' : 'Import Cards'}
         </button>
       </div>
       
@@ -1327,73 +1427,118 @@ Cum te numești? / cum te cheamă?: What is your name?`}
         </div>
       )}
     </div>
-  );
+  ), [bulkText, skipDuplicates, loading, importInProgress, bulkPreview, showPreview, importProgress, importStats, importStatus, previewBulkCards, addBulkCards]);
 
-  const ManageCardsTab = () => {
-    const handleSearchChange = (e) => {
-      setSearchTerm(e.target.value);
-      setCurrentPage(1); // Reset to first page when searching
-    };
+  const handleSearchChange = useCallback((e) => {
+    setSearchTerm(e.target.value);
+    setCurrentPage(1); // Reset to first page when searching
+  }, []);
 
-    const handleSortChange = (field) => {
-      if (sortBy === field) {
-        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-      } else {
-        setSortBy(field);
-        setSortOrder('asc');
-      }
-      setCurrentPage(1); // Reset to first page when sorting
-    };
+  const handleSortChange = useCallback((field) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+    setCurrentPage(1); // Reset to first page when sorting
+  }, [sortBy, sortOrder]);
 
-    const handlePageSizeChange = (e) => {
-      setPageSize(parseInt(e.target.value));
-      setCurrentPage(1); // Reset to first page when changing page size
-    };
+  const handlePageSizeChange = useCallback((e) => {
+    setPageSize(parseInt(e.target.value));
+    setCurrentPage(1); // Reset to first page when changing page size
+  }, []);
 
-    const handlePageChange = (page) => {
-      setCurrentPage(page);
-    };
+  const handlePageChange = useCallback((page) => {
+    setCurrentPage(page);
+  }, []);
 
-    const getSortIcon = (field) => {
-      if (sortBy !== field) return '↕️';
-      return sortOrder === 'asc' ? '↑' : '↓';
-    };
+  const getSortIcon = useCallback((field) => {
+    if (sortBy !== field) return '↕️';
+    return sortOrder === 'asc' ? '↑' : '↓';
+  }, [sortBy, sortOrder]);
 
-    const generatePageNumbers = () => {
-      const pages = [];
-      const maxVisiblePages = 5;
-      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-      
-      // Adjust start if we're near the end
-      if (endPage - startPage < maxVisiblePages - 1) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-      }
-      
-      for (let i = startPage; i <= endPage; i++) {
-        pages.push(i);
-      }
-      return pages;
-    };
+  const generatePageNumbers = useCallback(() => {
+    const pages = [];
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+    
+    // Adjust start if we're near the end
+    if (endPage - startPage < maxVisiblePages - 1) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+    return pages;
+  }, [currentPage, totalPages]);
+
+  const searchInputRef = useRef(null);
+
+  const ManageCardsTab = useMemo(() => {
 
     return (
       <div className="card">
         <div className="manage-cards-header">
           <h2 className="component-title">
-            Manage Cards ({totalCount} total)
+            Manage Cards ({manageLoading ? '...' : totalCount} total)
           </h2>
           
           {/* Search and Controls */}
           <div className="manage-controls">
             <div className="search-section">
               <input
+                ref={searchInputRef}
                 type="text"
                 placeholder="Search cards..."
                 value={searchTerm}
                 onChange={handleSearchChange}
                 className="search-input"
               />
+              {manageLoading && searchTerm !== debouncedSearchTerm && (
+                <small style={{ color: 'var(--text-muted)', marginTop: '5px', display: 'block' }}>
+                  Searching...
+                </small>
+              )}
             </div>
+            
+            {/* Tag Filter */}
+            {allTags.length > 0 && (
+              <div className="tag-filter-section">
+                <label>Filter by tags:</label>
+                <div className="tag-filter-list">
+                  {allTags.map(tag => (
+                    <button
+                      key={tag}
+                      className={`tag-filter ${selectedTags.includes(tag) ? 'active' : ''}`}
+                      onClick={() => {
+                        if (selectedTags.includes(tag)) {
+                          setSelectedTags(selectedTags.filter(t => t !== tag));
+                        } else {
+                          setSelectedTags([...selectedTags, tag]);
+                        }
+                        setCurrentPage(1); // Reset to first page when filtering
+                      }}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                  {selectedTags.length > 0 && (
+                    <button
+                      className="clear-filters"
+                      onClick={() => {
+                        setSelectedTags([]);
+                        setCurrentPage(1);
+                      }}
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             
             <div className="controls-section">
               <div className="page-size-control">
@@ -1410,7 +1555,9 @@ Cum te numești? / cum te cheamă?: What is your name?`}
           </div>
         </div>
         
-        {totalCount === 0 ? (
+        {manageLoading ? (
+          <div className="loading">Loading cards...</div>
+        ) : totalCount === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">📚</div>
             <p>{searchTerm ? 'No cards found matching your search.' : 'No flashcards yet. Add some cards to get started!'}</p>
@@ -1465,6 +1612,15 @@ Cum te numești? / cum te cheamă?: What is your name?`}
                           placeholder="Enter Romanian text"
                         />
                       </div>
+                      <div className="form-group">
+                        <label>Tags:</label>
+                        <input
+                          type="text"
+                          value={editCard.tags}
+                          onChange={(e) => setEditCard({ ...editCard, tags: e.target.value })}
+                          placeholder="Enter tags separated by commas"
+                        />
+                      </div>
                       <div className="card-actions">
                         <button
                           className="btn btn-success btn-small"
@@ -1490,6 +1646,15 @@ Cum te numești? / cum te cheamă?: What is your name?`}
                       <div className="card-content">
                         <div className="card-english">{card.english}</div>
                         <div className="card-romanian">{card.romanian}</div>
+                        {card.tags && card.tags.length > 0 && (
+                          <div className="card-tags">
+                            {card.tags.map((tag, index) => (
+                              <span key={index} className="tag">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         <div className="card-date">
                           {new Date(card.created_at).toLocaleDateString()}
                         </div>
@@ -1572,7 +1737,7 @@ Cum te numești? / cum te cheamă?: What is your name?`}
         )}
       </div>
     );
-  };
+  }, [manageLoading, totalCount, searchTerm, handleSearchChange, manageCards, sortBy, sortOrder, handleSortChange, getSortIcon, allTags, selectedTags, setSelectedTags, tagFilter, setTagFilter, currentPage, pageSize, handlePageSizeChange, totalPages, handlePageChange, generatePageNumbers, editingCard, editCard, setEditCard, updateCard, cancelEditing, startEditing, deleteCard, loading]);
 
   return (
     <div className={`container ${darkMode ? 'dark-mode' : ''}`}>
@@ -1629,10 +1794,10 @@ Cum te numești? / cum te cheamă?: What is your name?`}
       {loading && <div className="loading">Loading...</div>}
 
       <main>
-        {activeTab === 'study' && <StudyTab />}
-        {activeTab === 'add' && <AddCardTab />}
-        {activeTab === 'bulk' && <BulkImportTab />}
-        {activeTab === 'manage' && <ManageCardsTab />}
+        {activeTab === 'study' && StudyTab}
+        {activeTab === 'add' && AddCardTab}
+        {activeTab === 'bulk' && BulkImportTab}
+        {activeTab === 'manage' && ManageCardsTab}
       </main>
     </div>
   );
