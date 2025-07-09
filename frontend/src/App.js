@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
-import { Shuffle, Plus, BookOpen, List, RotateCcw, Trash2, Upload, FileText, Clock, Play, Pause, SkipForward, Volume2, Moon, Sun, Edit, Save, X } from 'lucide-react';
+import { Shuffle, Plus, BookOpen, List, WalletCards, RotateCcw, Trash2, Upload, FileText, Clock, Play, Pause, SkipForward, Volume2, Moon, Sun, Edit, Save, X } from 'lucide-react';
 import './index.css';
 
 const API_BASE_URL = '/api';
@@ -32,6 +32,21 @@ function App() {
     const saved = localStorage.getItem('darkMode');
     return saved ? JSON.parse(saved) : false;
   });
+
+  // Points system state
+  const [points, setPoints] = useState(() => {
+    const saved = localStorage.getItem('romanianLearningPoints');
+    return saved ? parseInt(saved) : 0;
+  });
+  const [dailyStreak, setDailyStreak] = useState(() => {
+    const saved = localStorage.getItem('romanianLearningStreak');
+    return saved ? JSON.parse(saved) : { count: 0, lastStudyDate: null };
+  });
+  const [achievements, setAchievements] = useState(() => {
+    const saved = localStorage.getItem('romanianLearningAchievements');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [recentPoints, setRecentPoints] = useState(null); // For showing point animations
 
   // Timer mode state
   const [timerMode, setTimerMode] = useState(false);
@@ -128,8 +143,107 @@ function App() {
     }
   }, [darkMode]);
 
+  // Points system effects
+  useEffect(() => {
+    localStorage.setItem('romanianLearningPoints', points.toString());
+  }, [points]);
+
+  useEffect(() => {
+    localStorage.setItem('romanianLearningStreak', JSON.stringify(dailyStreak));
+  }, [dailyStreak]);
+
+  useEffect(() => {
+    localStorage.setItem('romanianLearningAchievements', JSON.stringify(achievements));
+  }, [achievements]);
+
   const toggleDarkMode = () => {
     setDarkMode(!darkMode);
+  };
+
+  // Points system functions
+  const awardPoints = (amount, reason) => {
+    setPoints(prev => prev + amount);
+    setRecentPoints({ amount, reason });
+    
+    // Show point notification for 2 seconds
+    setTimeout(() => {
+      setRecentPoints(null);
+    }, 2000);
+    
+    // Check for new achievements
+    checkAchievements(points + amount);
+  };
+
+  const updateDailyStreak = () => {
+    const today = new Date().toDateString();
+    const lastStudyDate = dailyStreak.lastStudyDate;
+    
+    if (lastStudyDate !== today) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      
+      if (lastStudyDate === yesterday.toDateString()) {
+        // Consecutive day
+        setDailyStreak({
+          count: dailyStreak.count + 1,
+          lastStudyDate: today
+        });
+        awardPoints(5, `Daily streak: ${dailyStreak.count + 1} days!`);
+      } else {
+        // New streak or broken streak
+        setDailyStreak({
+          count: 1,
+          lastStudyDate: today
+        });
+        if (lastStudyDate !== null) {
+          awardPoints(1, 'Back to studying!');
+        }
+      }
+    }
+  };
+
+  const checkAchievements = (currentPoints) => {
+    const possibleAchievements = [
+      { id: 'first_points', name: 'First Steps', description: 'Earned your first points!', threshold: 1, points: 10 },
+      { id: 'dedicated_learner', name: 'Dedicated Learner', description: 'Earned 100 points!', threshold: 100, points: 25 },
+      { id: 'language_enthusiast', name: 'Language Enthusiast', description: 'Earned 500 points!', threshold: 500, points: 50 },
+      { id: 'romanian_scholar', name: 'Romanian Scholar', description: 'Earned 1000 points!', threshold: 1000, points: 100 },
+      { id: 'deck_master', name: 'Deck Master', description: 'Completed your first shuffled deck!', threshold: 0, points: 20 },
+      { id: 'speed_learner', name: 'Speed Learner', description: 'Completed 10 timer challenges!', threshold: 0, points: 30 },
+      { id: 'streak_warrior', name: 'Streak Warrior', description: 'Maintained a 7-day study streak!', threshold: 0, points: 50 },
+    ];
+
+    possibleAchievements.forEach(achievement => {
+      if (!achievements.some(a => a.id === achievement.id)) {
+        let shouldUnlock = false;
+        
+        if (achievement.id === 'first_points' && currentPoints >= 1) shouldUnlock = true;
+        if (achievement.id === 'dedicated_learner' && currentPoints >= 100) shouldUnlock = true;
+        if (achievement.id === 'language_enthusiast' && currentPoints >= 500) shouldUnlock = true;
+        if (achievement.id === 'romanian_scholar' && currentPoints >= 1000) shouldUnlock = true;
+        
+        if (shouldUnlock) {
+          setAchievements(prev => [...prev, { ...achievement, unlockedAt: new Date().toISOString() }]);
+          setSuccess(`🏆 Achievement Unlocked: ${achievement.name}! +${achievement.points} bonus points!`);
+          setTimeout(() => setPoints(p => p + achievement.points), 1000);
+        }
+      }
+    });
+  };
+
+  const unlockSpecialAchievement = (achievementId) => {
+    const specialAchievements = {
+      'deck_master': { name: 'Deck Master', description: 'Completed your first shuffled deck!', points: 20 },
+      'speed_learner': { name: 'Speed Learner', description: 'Completed 10 timer challenges!', points: 30 },
+      'streak_warrior': { name: 'Streak Warrior', description: 'Maintained a 7-day study streak!', points: 50 },
+    };
+    
+    if (!achievements.some(a => a.id === achievementId) && specialAchievements[achievementId]) {
+      const achievement = specialAchievements[achievementId];
+      setAchievements(prev => [...prev, { id: achievementId, ...achievement, unlockedAt: new Date().toISOString() }]);
+      setSuccess(`🏆 Achievement Unlocked: ${achievement.name}! +${achievement.points} bonus points!`);
+      setTimeout(() => setPoints(p => p + achievement.points), 1000);
+    }
   };
 
   // Initialize shuffled deck when cards are loaded or shuffled mode is enabled
@@ -346,6 +460,8 @@ function App() {
   };
 
   const nextCard = async () => {
+    // Don't award points automatically - user should use "I was correct" button
+    
     if (shuffledDeckMode) {
       getShuffledCard();
     } else {
@@ -357,6 +473,24 @@ function App() {
       setTimeout(() => {
         startTimer();
       }, 100);
+    }
+  };
+
+  // Function to award points when user says they were correct
+  const markAsCorrect = () => {
+    if (currentCard && showAnswer) {
+      updateDailyStreak();
+      
+      if (timerMode) {
+        awardPoints(5, 'Correct answer in timer mode!');
+      } else {
+        awardPoints(3, 'Correct answer!');
+      }
+      
+      // Optionally auto-advance to next card after marking correct
+      setTimeout(() => {
+        nextCard();
+      }, 1500); // Give time to see the point animation
     }
   };
 
@@ -377,7 +511,10 @@ function App() {
   const getShuffledCard = () => {
     if (remainingCards.length === 0) {
       if (completedCards.length > 0) {
-        // Deck completed, offer to restart
+        // Deck completed, award bonus points
+        awardPoints(10, `Deck completed! (${completedCards.length} cards)`);
+        unlockSpecialAchievement('deck_master');
+        
         setSuccess(`Deck completed! You've studied all ${completedCards.length} cards. Starting a new shuffled deck...`);
         setTimeout(() => setSuccess(''), 3000);
         initializeShuffledDeck();
@@ -537,6 +674,10 @@ function App() {
       
       await axios.post(`${API_BASE_URL}/cards`, cardData);
       setNewCard({ english: '', romanian: '', tags: '' });
+      
+      // Award points for adding a new card
+      awardPoints(5, 'New card added!');
+      
       setSuccess('Card added successfully!');
       setError('');
       await fetchCards();
@@ -853,6 +994,12 @@ function App() {
                 setBulkPreview([]);
                 setShowPreview(false);
                 
+                // Award points for bulk import
+                if (data.added_count > 0) {
+                  const bonusPoints = Math.min(data.added_count * 2, 50); // 2 points per card, max 50
+                  awardPoints(bonusPoints, `Bulk import: ${data.added_count} cards!`);
+                }
+                
                 let message = `Successfully imported ${data.added_count} cards`;
                 if (data.skipped_count > 0) {
                   message += ` (${data.skipped_count} duplicates skipped)`;
@@ -1095,12 +1242,15 @@ function App() {
             }
             
             if (allowClickInTimer || !timerMode) {
-              if (timerMode && timerActive && !showAnswer) {
-                // Stop timer when clicking early
-                setTimerActive(false);
-                setTimeLeft(0);
-              }
-              setShowAnswer(!showAnswer);
+                          if (timerMode && timerActive && !showAnswer) {
+              // Stop timer when clicking early
+              setTimerActive(false);
+              setTimeLeft(0);
+            }
+            
+            // Don't award points automatically - let user decide if they were correct
+            
+            setShowAnswer(!showAnswer);
             }
           }}
           onKeyDown={(e) => {
@@ -1114,6 +1264,9 @@ function App() {
                     setTimerActive(false);
                     setTimeLeft(0);
                   }
+                  
+                  // Don't award points automatically - let user decide if they were correct
+                  
                   setShowAnswer(!showAnswer);
                 }
               }
@@ -1131,55 +1284,99 @@ function App() {
             }
           </div>
           
-          {/* Text-to-Speech Controls */}
-          {ttsEnabled && currentCard && (
-            <div className="tts-controls" style={{ justifyContent: 'center' }}>
-              {!showAnswer ? (
-                // Show speaker for the visible side
-                <button 
-                  className="btn btn-secondary btn-small" 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isFlipped) {
-                      speakRomanian();
-                    } else {
-                      speakEnglish();
-                    }
-                  }}
-                  disabled={speaking}
-                  title={`Listen to ${isFlipped ? 'Romanian' : 'English'}`}
-                >
-                  <Volume2 size={16} />
-                  {speaking ? 'Playing...' : (isFlipped ? 'RO Listen' : 'EN Listen')}
-                </button>
-              ) : (
-                // Show both speakers when answer is revealed
-                <>
+          {/* Correctness and TTS Controls */}
+          {currentCard && (
+            <div className="flashcard-actions" style={{ display: 'flex', flexDirection: 'column', gap: '15px', alignItems: 'center' }}>
+              
+              {/* Correctness Button - only show when answer is revealed */}
+              {showAnswer && (
+                <div className="correctness-controls">
                   <button 
-                    className="btn btn-secondary btn-small" 
+                    className="btn btn-success" 
                     onClick={(e) => {
                       e.stopPropagation();
-                      speakRomanian();
+                      markAsCorrect();
                     }}
-                    disabled={speaking}
-                    title="Listen to Romanian"
+                    style={{ 
+                      fontSize: '1.1rem', 
+                      padding: '12px 24px',
+                      background: 'linear-gradient(135deg, #28a745, #20c997)',
+                      border: 'none',
+                      boxShadow: '0 4px 12px rgba(40, 167, 69, 0.3)',
+                      animation: 'pulse 2s infinite'
+                    }}
                   >
-                    <Volume2 size={16} />
-                    {speaking ? 'Playing...' : 'Romanian'}
+                    ✅ I was correct! (+{timerMode ? '5' : '3'} points)
                   </button>
                   <button 
                     className="btn btn-secondary btn-small" 
                     onClick={(e) => {
                       e.stopPropagation();
-                      speakEnglish();
+                      // Just go to next card without points
+                      nextCard();
                     }}
-                    disabled={speaking}
-                    title="Listen to English"
+                    style={{ 
+                      marginTop: '5px',
+                      opacity: '0.7',
+                      fontSize: '0.9rem'
+                    }}
                   >
-                    <Volume2 size={16} />
-                    {speaking ? 'Playing...' : 'English'}
+                    I was wrong - Next card
                   </button>
-                </>
+                </div>
+              )}
+
+              {/* Text-to-Speech Controls */}
+              {ttsEnabled && (
+                <div className="tts-controls" style={{ justifyContent: 'center' }}>
+                  {!showAnswer ? (
+                    // Show speaker for the visible side
+                    <button 
+                      className="btn btn-secondary btn-small" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isFlipped) {
+                          speakRomanian();
+                        } else {
+                          speakEnglish();
+                        }
+                      }}
+                      disabled={speaking}
+                      title={`Listen to ${isFlipped ? 'Romanian' : 'English'}`}
+                    >
+                      <Volume2 size={16} />
+                      {speaking ? 'Playing...' : (isFlipped ? 'RO Listen' : 'EN Listen')}
+                    </button>
+                  ) : (
+                    // Show both speakers when answer is revealed
+                    <>
+                      <button 
+                        className="btn btn-secondary btn-small" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          speakRomanian();
+                        }}
+                        disabled={speaking}
+                        title="Listen to Romanian"
+                      >
+                        <Volume2 size={16} />
+                        {speaking ? 'Playing...' : 'Romanian'}
+                      </button>
+                      <button 
+                        className="btn btn-secondary btn-small" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          speakEnglish();
+                        }}
+                        disabled={speaking}
+                        title="Listen to English"
+                      >
+                        <Volume2 size={16} />
+                        {speaking ? 'Playing...' : 'English'}
+                      </button>
+                    </>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -1739,21 +1936,212 @@ Cum te numești? / cum te cheamă?: What is your name? [questions]`}
     );
   }, [manageLoading, totalCount, searchTerm, handleSearchChange, manageCards, sortBy, sortOrder, handleSortChange, getSortIcon, allTags, selectedTags, setSelectedTags, tagFilter, setTagFilter, currentPage, pageSize, handlePageSizeChange, totalPages, handlePageChange, generatePageNumbers, editingCard, editCard, setEditCard, updateCard, cancelEditing, startEditing, deleteCard, loading]);
 
+  const AchievementsTab = useMemo(() => (
+    <div className="card">
+      <h2 className="component-title">
+        🏆 Achievements & Progress
+      </h2>
+      
+      {/* Stats Overview */}
+      <div className="stats-overview">
+        <div className="stat-card">
+          <div className="stat-icon">⭐</div>
+          <div className="stat-content">
+            <div className="stat-value">{points.toLocaleString()}</div>
+            <div className="stat-label">Total Points</div>
+          </div>
+        </div>
+        
+        <div className="stat-card">
+          <div className="stat-icon">🔥</div>
+          <div className="stat-content">
+            <div className="stat-value">{dailyStreak.count}</div>
+            <div className="stat-label">Day Streak</div>
+          </div>
+        </div>
+        
+        <div className="stat-card">
+          <div className="stat-icon">🏆</div>
+          <div className="stat-content">
+            <div className="stat-value">{achievements.length}</div>
+            <div className="stat-label">Achievements</div>
+          </div>
+        </div>
+        
+        <div className="stat-card">
+          <div className="stat-icon">📚</div>
+          <div className="stat-content">
+            <div className="stat-value">{cards.length}</div>
+            <div className="stat-label">Total Cards</div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Points Earning Guide */}
+      <div className="points-guide">
+        <h3>How to Earn Points</h3>
+        <div className="points-list">
+          <div className="points-item">
+            <span className="points-amount">+3</span>
+            <span className="points-description">Get a flashcard correct (regular mode)</span>
+          </div>
+          <div className="points-item">
+            <span className="points-amount">+5</span>
+            <span className="points-description">Get a flashcard correct (timer mode)</span>
+          </div>
+          <div className="points-item">
+            <span className="points-amount">+5</span>
+            <span className="points-description">Daily streak bonus</span>
+          </div>
+          <div className="points-item">
+            <span className="points-amount">+5</span>
+            <span className="points-description">Add a new flashcard</span>
+          </div>
+          <div className="points-item">
+            <span className="points-amount">+10</span>
+            <span className="points-description">Complete a shuffled deck</span>
+          </div>
+          <div className="points-item">
+            <span className="points-amount">+2 each</span>
+            <span className="points-description">Bulk import cards (max 50 points)</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Achievement Showcase */}
+      <div className="achievements-section">
+        <h3>Achievement Gallery</h3>
+        {achievements.length === 0 ? (
+          <div className="no-achievements">
+            <div className="empty-state-icon">🎯</div>
+            <p>No achievements yet! Start studying to unlock your first achievement.</p>
+          </div>
+        ) : (
+          <div className="achievements-grid">
+            {achievements.map((achievement, index) => (
+              <div key={achievement.id} className="achievement-card earned">
+                <div className="achievement-icon">🏆</div>
+                <div className="achievement-content">
+                  <div className="achievement-name">{achievement.name}</div>
+                  <div className="achievement-description">{achievement.description}</div>
+                  <div className="achievement-points">+{achievement.points} points</div>
+                  <div className="achievement-date">
+                    Unlocked {new Date(achievement.unlockedAt).toLocaleDateString()}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        
+        {/* Available Achievements */}
+        <h3>Available Achievements</h3>
+        <div className="achievements-grid">
+          {[
+            { id: 'first_points', name: 'First Steps', description: 'Earn your first points!', points: 10 },
+            { id: 'dedicated_learner', name: 'Dedicated Learner', description: 'Earn 100 points!', points: 25 },
+            { id: 'language_enthusiast', name: 'Language Enthusiast', description: 'Earn 500 points!', points: 50 },
+            { id: 'romanian_scholar', name: 'Romanian Scholar', description: 'Earn 1000 points!', points: 100 },
+            { id: 'deck_master', name: 'Deck Master', description: 'Complete your first shuffled deck!', points: 20 },
+            { id: 'speed_learner', name: 'Speed Learner', description: 'Complete 10 timer challenges!', points: 30 },
+            { id: 'streak_warrior', name: 'Streak Warrior', description: 'Maintain a 7-day study streak!', points: 50 },
+          ].filter(achievement => !achievements.some(a => a.id === achievement.id)).map((achievement) => (
+            <div key={achievement.id} className="achievement-card locked">
+              <div className="achievement-icon">🔒</div>
+              <div className="achievement-content">
+                <div className="achievement-name">{achievement.name}</div>
+                <div className="achievement-description">{achievement.description}</div>
+                <div className="achievement-points">+{achievement.points} points</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      
+      {/* Manual Points Button for Testing */}
+      <div className="debug-section" style={{ marginTop: '30px', padding: '20px', border: '2px dashed #ccc', borderRadius: '8px' }}>
+        <h3>🎯 Quick Actions</h3>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => awardPoints(10, 'Manual bonus!')}
+          >
+            +10 Points (Test)
+          </button>
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => {
+              setPoints(0);
+              setAchievements([]);
+              setDailyStreak({ count: 0, lastStudyDate: null });
+            }}
+          >
+            Reset Progress
+          </button>
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => {
+              awardPoints(25, 'Adding new cards!');
+            }}
+          >
+            Card Creator Bonus (+25)
+          </button>
+        </div>
+      </div>
+    </div>
+  ), [points, dailyStreak, achievements, cards.length, awardPoints]);
+
   return (
     <div className={`container ${darkMode ? 'dark-mode' : ''}`}>
       <header className="header">
         <div className="header-content">
+          {/* Centered Title */}
           <div className="header-text">
-            <h1>🏛️ Learn Romanian</h1>
+            <h1>Learn Romanian</h1>
             <p>Master Romanian with interactive flashcards</p>
           </div>
-          <button 
-            className="theme-toggle" 
-            onClick={toggleDarkMode}
-            aria-label="Toggle dark mode"
-          >
-            {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-          </button>
+          
+          {/* Stats Display - Under Title */}
+          <div className="stats-display">
+            <div className="stat-item">
+              <span className="stat-icon">⭐</span>
+              <div className="stat-content">
+                <span className="stat-value">{points.toLocaleString()}</span>
+                <span className="stat-label">points</span>
+              </div>
+            </div>
+            
+            {dailyStreak.count > 0 && (
+              <div className="stat-item">
+                <span className="stat-icon">🔥</span>
+                <div className="stat-content">
+                  <span className="stat-value">{dailyStreak.count}</span>
+                  <span className="stat-label">day streak</span>
+                </div>
+              </div>
+            )}
+            
+            {achievements.length > 0 && (
+              <button 
+                className="stat-item stat-button"
+                onClick={() => setActiveTab('achievements')}
+                title={`${achievements.length} achievements unlocked`}
+              >
+                <span className="stat-icon">🏆</span>
+                <div className="stat-content">
+                  <span className="stat-value">{achievements.length}</span>
+                  <span className="stat-label">achievements</span>
+                </div>
+              </button>
+            )}
+            
+            {/* Recent Points Animation */}
+            {recentPoints && (
+              <div className="recent-points-animation">
+                +{recentPoints.amount} {recentPoints.reason}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1761,43 +2149,58 @@ Cum te numești? / cum te cheamă?: What is your name? [questions]`}
       {success && <div className="success">{success}</div>}
 
       <nav className="nav-tabs">
-        <button
-          className={`nav-tab ${activeTab === 'study' ? 'active' : ''}`}
-          onClick={() => setActiveTab('study')}
+        <div className="nav-tabs-left">
+          <button
+            className={`nav-tab ${activeTab === 'study' ? 'active' : ''}`}
+            onClick={() => setActiveTab('study')}
+          >
+            <BookOpen size={20} />
+            <span>Study</span>
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'add' ? 'active' : ''}`}
+            onClick={() => setActiveTab('add')}
+          >
+            <Plus size={20} />
+            <span>Add Cards</span>
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'bulk' ? 'active' : ''}`}
+            onClick={() => setActiveTab('bulk')}
+          >
+            <Upload size={20} />
+            <span>Bulk Import</span>
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'manage' ? 'active' : ''}`}
+            onClick={() => setActiveTab('manage')}
+          >
+            <WalletCards size={20} />
+            <span>Manage Cards</span>
+          </button>
+          <button
+            className={`nav-tab ${activeTab === 'achievements' ? 'active' : ''}`}
+            onClick={() => setActiveTab('achievements')}
+          >
+            <span style={{ fontSize: '20px' }}>🏆</span>
+            <span>Achievements</span>
+          </button>
+        </div>
+        
+        <button 
+          className="theme-toggle nav-theme-toggle" 
+          onClick={toggleDarkMode}
+          aria-label="Toggle dark mode"
         >
-          <BookOpen size={20} />
-          <span>Study</span>
-        </button>
-        <button
-          className={`nav-tab ${activeTab === 'add' ? 'active' : ''}`}
-          onClick={() => setActiveTab('add')}
-        >
-          <Plus size={20} />
-          <span>Add Cards</span>
-        </button>
-        <button
-          className={`nav-tab ${activeTab === 'bulk' ? 'active' : ''}`}
-          onClick={() => setActiveTab('bulk')}
-        >
-          <Upload size={20} />
-          <span>Bulk Import</span>
-        </button>
-        <button
-          className={`nav-tab ${activeTab === 'manage' ? 'active' : ''}`}
-          onClick={() => setActiveTab('manage')}
-        >
-          <List size={20} />
-          <span>Manage Cards</span>
+          {darkMode ? <Sun size={20} /> : <Moon size={20} />}
         </button>
       </nav>
-
-      {loading && <div className="loading">Loading...</div>}
-
       <main>
         {activeTab === 'study' && StudyTab}
         {activeTab === 'add' && AddCardTab}
         {activeTab === 'bulk' && BulkImportTab}
         {activeTab === 'manage' && ManageCardsTab}
+        {activeTab === 'achievements' && AchievementsTab}
       </main>
     </div>
   );
